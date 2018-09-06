@@ -5,7 +5,7 @@ import java.net.*;
 import java.util.*;
 
 public class Receiver {
-	enum State {
+	public enum State {
 		HANDSHAKE,
 		CONNECTED,
 		CLOSING,
@@ -23,16 +23,18 @@ public class Receiver {
 
 		// Datagram socket for receiving and sending UDP packets.
     // Wait for SYN from sender. We assume that packets won't be dropped here.
+    Logger logger = new Logger("Receiver_log.txt");
     DatagramSocket socket = new DatagramSocket(myPort);
     State state = State.HANDSHAKE;
-    DatagramPacket handshakePacket = new DatagramPacket(new byte[STPSegment.HEADER_BYTES], STPSegment.HEADER_BYTES);
+    DatagramPacket handshakePacket = new DatagramPacket(new byte[1024], 1024);
     socket.receive(handshakePacket);
 
     // Parse and sync sender information.
+    STPSegment responseSegment = new STPSegment(Arrays.copyOfRange(handshakePacket.getData(), 0, handshakePacket.getLength()));
     InetAddress ip = handshakePacket.getAddress();
     int port = handshakePacket.getPort();
     int seqNum = 10;
-    int ackNum = STPSegment.getSeqNum(handshakePacket.getData()) + 1;
+    int ackNum = responseSegment.getSeqNum() + 1;
     int mss = 500;
     
     // Send back a synack and create the file.
@@ -48,8 +50,9 @@ public class Receiver {
 
 		// Await an ACK from sender.
     socket.receive(handshakePacket);
-    seqNum = STPSegment.getAckNum(handshakePacket.getData());
-    ackNum = STPSegment.getSeqNum(handshakePacket.getData()) + 1;
+    responseSegment = new STPSegment(Arrays.copyOfRange(handshakePacket.getData(), 0, handshakePacket.getLength()));
+    seqNum = responseSegment.getAckNum();
+    ackNum = responseSegment.getSeqNum() + 1;
     state = State.CONNECTED;
 
     // Begin DATA TRANSFER await data packets.
@@ -57,14 +60,13 @@ public class Receiver {
     while(state == State.CONNECTED) {
 			socket.receive(dataPacket);
 
-			byte[] segment = dataPacket.getData();
-	    if(STPSegment.getFlags(segment) == STPSegment.FIN_MASK) {
+			responseSegment = new STPSegment(Arrays.copyOfRange(dataPacket.getData(), 0, dataPacket.getLength()));
+	    if(responseSegment.getFlags() == STPSegment.FIN_MASK) {
     		state = State.CLOSING;
     		ackNum += 1;
-	    } else if(STPSegment.getSeqNum(segment) == ackNum) {
-	    	byte[] data = STPSegment.getData(segment, STPSegment.HEADER_BYTES, dataPacket.getLength());
-  			ackNum += data.length;
-  			Files.write(file, data);
+	    } else if(responseSegment.getSeqNum() == ackNum) {
+  			ackNum += responseSegment.getData().length;
+  			Files.write(file, responseSegment.getData());
 	    }
 	    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 		}
@@ -74,9 +76,8 @@ public class Receiver {
 		// Again we assume that teardown packets do not go through PLD.
 		socket.send(buildPacket(seqNum, ackNum, STPSegment.FIN_MASK, ip, port));
 
-		// Wait for ACK from sender.
+		// Wait for ACK from sender and ACK back.
     socket.receive(new DatagramPacket(new byte[STPSegment.HEADER_BYTES], STPSegment.HEADER_BYTES));
-
 		socket.close();
 	}
 

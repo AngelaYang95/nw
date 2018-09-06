@@ -26,8 +26,9 @@ public class Sender {
 		float pDrop = Float.parseFloat(args[6]);
 
 		// Initialise sender and Datagram socket for sending UDP packets.
-		PLDModule pld = new PLDModule(pDrop);
+		Logger logger = new Logger("Sender_log.txt");
     DatagramSocket socket = new DatagramSocket();
+		PLDModule pld = new PLDModule(socket, pDrop);
     DatagramPacket response = new DatagramPacket(new byte[STPSegment.HEADER_BYTES+mss], STPSegment.HEADER_BYTES+mss);
     STPSegment responseSegment;
     int seqNum = 0, ackNum = 0;
@@ -38,8 +39,9 @@ public class Sender {
 
     // Await SYNACK and acknowledge.
     socket.receive(response);
-    seqNum = STPSegment.getAckNum(response.getData());
-    ackNum = STPSegment.getSeqNum(response.getData()) + 1;
+    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
+    seqNum = responseSegment.getAckNum();
+    ackNum = responseSegment.getSeqNum() + 1;
 
     // Goes into data transfer part.
     socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
@@ -64,22 +66,25 @@ public class Sender {
     			continue;
     		}
     		data = Arrays.copyOfRange(data, 0, bytesRead);
-    		System.out.println("Bytes read are " + (char)data[0] + (char)data[1]);
     		window.add(new STPSegment(seqNum, ackNum, STPSegment.DATA_MASK, data));
+    	} else {
+    		// this is retransmission
     	}
 
-    	// Send out packets left in window.
+    	// Send out packets left in window and log details.
+    	long sendTime = System.currentTimeMillis();
     	for(STPSegment segment : window) {
     		segment.setAckNum(ackNum);
-	    	pld.send(socket, segment, ip, port);
+	    	Event e = pld.send(segment, ip, port);
+	    	logger.log(e, System.currentTimeMillis());
     	}
 
-    	// Await for acknowledgemnet from receiver.
-    	long sendTime = System.currentTimeMillis();
+    	// Await for acknowledgement from receiver.
 	    try {
 	    	socket.setSoTimeout((int)(estimatedRTT + gamma * devRTT));
 	   		socket.receive(response);
 	    } catch(SocketTimeoutException e) {
+	    	// Increment retransmission count.
 	    	System.out.println("Timeout retransmitting...");
 	    	continue;
 	    }
@@ -88,11 +93,13 @@ public class Sender {
 	    devRTT = (1 - 0.25) * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
 
 	    // Process received ack.
-	    byte[] segment = response.getData();
-    	if(seqNum < STPSegment.getAckNum(segment)) {
-    		seqNum = STPSegment.getAckNum(segment);
-    		ackNum = STPSegment.getSeqNum(segment) + 1;
+	    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
+    	if(seqNum < responseSegment.getAckNum()) {
+    		seqNum = responseSegment.getAckNum();
+    		ackNum = responseSegment.getSeqNum() + 1;
     		window.remove(0);
+    	} else {
+    		// dupl ack received.
     	}
     }
     System.out.println("Data transfer complete! Closing connection...");
@@ -100,40 +107,24 @@ public class Sender {
     // Send FIN and await acknowledgement.
     socket.send(buildPacket(seqNum, ackNum, STPSegment.FIN_MASK, ip, port));
     socket.receive(response);
-    seqNum = STPSegment.getAckNum(response.getData());
-    ackNum = STPSegment.getSeqNum(response.getData()) + 1;
+    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
+    seqNum = responseSegment.getAckNum();
+		ackNum = responseSegment.getSeqNum() + 1;
 
+		System.out.println("Ack waiiting...");
     // Await FIN and return ack.
     socket.receive(response);
-    seqNum = STPSegment.getAckNum(response.getData());
-    ackNum = STPSegment.getSeqNum(response.getData()) + 1;
+    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
+    seqNum = responseSegment.getAckNum();
+		ackNum = responseSegment.getSeqNum() + 1;
 
+		System.out.println("Done");
     socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 
     // Close our connection.
     socket.close();
-	}
-
-	public static STPSegment getSegment(DatagramPacket packet) throws IOException {
-		byte[] data = Arrays.copyOfRange(packet.getData(), 0, packet.getLength());
-		ObjectInputStream oStream = new ObjectInputStream(new ByteArrayInputStream(data));
-		STPSegment segment = null;
-		// try {
-		// 	segment = (STPSegment) oStream.readObject();
-		// } catch (ClassNotFoundException e) {
-		// 	e.printStackTrace();
-		// }
-		return segment;
-	}
-
-	public static byte[] serialize(STPSegment segment) throws IOException {
-		ByteArrayOutputStream bStream = new ByteArrayOutputStream();
-		ObjectOutputStream oStream = new ObjectOutputStream(bStream);
-		oStream.writeObject(segment);
-		byte[] s = bStream.toByteArray();
-		// oStream.close();
-		// bStream.close();
-		return s;
+    logger.close();
+		System.out.println("Done 2");
 	}
 
 	public static DatagramPacket buildPacket(int seqNum, int ackNum, int flags, InetAddress ip, int port) {
