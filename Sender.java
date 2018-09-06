@@ -65,6 +65,7 @@ public class Sender {
     			br.close();
     			continue;
     		}
+    		System.out.println(bytesRead);
     		data = Arrays.copyOfRange(data, 0, bytesRead);
     		window.add(new STPSegment(seqNum, ackNum, STPSegment.DATA_MASK, data));
     	} else {
@@ -118,13 +119,11 @@ public class Sender {
     seqNum = responseSegment.getAckNum();
 		ackNum = responseSegment.getSeqNum() + 1;
 
-		System.out.println("Done");
     socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 
     // Close our connection.
     socket.close();
     logger.close();
-		System.out.println("Done 2");
 	}
 
 	public static DatagramPacket buildPacket(int seqNum, int ackNum, int flags, InetAddress ip, int port) {

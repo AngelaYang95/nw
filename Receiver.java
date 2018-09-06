@@ -27,26 +27,25 @@ public class Receiver {
     DatagramSocket socket = new DatagramSocket(myPort);
     State state = State.HANDSHAKE;
     DatagramPacket handshakePacket = new DatagramPacket(new byte[1024], 1024);
-    socket.receive(handshakePacket);
 
     // Parse and sync sender information.
+    socket.receive(handshakePacket);
     STPSegment responseSegment = new STPSegment(Arrays.copyOfRange(handshakePacket.getData(), 0, handshakePacket.getLength()));
     InetAddress ip = handshakePacket.getAddress();
     int port = handshakePacket.getPort();
     int seqNum = 10;
     int ackNum = responseSegment.getSeqNum() + 1;
     int mss = 500;
-    
+
+    File file = new File(filename);
+    FileOutputStream out = new FileOutputStream(file);
+    try {
+    	file.createNewFile();
+    } catch(IOException e) {
+    }
+
     // Send back a synack and create the file.
 		socket.send(buildPacket(seqNum, ackNum, STPSegment.SYN_MASK | STPSegment.ACK_MASK, ip, port));
-    Path file = FileSystems.getDefault().getPath(filename);
-		try {
-	    Files.createFile(file);
-		} catch (FileAlreadyExistsException x) {
-			// Don't do anything.
-		} catch (IOException x) {
-	    System.err.format("createFile error: %s%n", x);
-		}
 
 		// Await an ACK from sender.
     socket.receive(handshakePacket);
@@ -66,7 +65,11 @@ public class Receiver {
     		ackNum += 1;
 	    } else if(responseSegment.getSeqNum() == ackNum) {
   			ackNum += responseSegment.getData().length;
-  			Files.write(file, responseSegment.getData());
+  			try {
+  				out.write(responseSegment.getData());
+  			} catch(IOException e) {
+
+  			}
 	    }
 	    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 		}
@@ -79,6 +82,7 @@ public class Receiver {
 		// Wait for ACK from sender and ACK back.
     socket.receive(new DatagramPacket(new byte[STPSegment.HEADER_BYTES], STPSegment.HEADER_BYTES));
 		socket.close();
+		out.close();
 	}
 
 	public static DatagramPacket buildPacket(int seqNum, int ackNum, int flags, InetAddress ip, int port) {

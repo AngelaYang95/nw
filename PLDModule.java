@@ -11,6 +11,9 @@ public class PLDModule {
 	private DatagramSocket socket;
 	private Random random;
 	private float pDrop;
+	private float pDuplicate;
+	private float pCorrupt;
+	private float pOrder;
 
 	// Statistics
 	private int dropped = 0;
@@ -34,7 +37,13 @@ public class PLDModule {
 		if(random.nextFloat() < pDrop) {
 			dropped++;
 			return Event.DROP;
-		}
+		} 
+		// if(random.nextFloat() < pDuplicate) {
+		// 	duplicated++;
+		// 	socket.send(new DatagramPacket(s, s.length, address, port));
+		// } else if(random.nextFloat() < pCorrupt) {
+		// 	// bit error
+		// }
 
 		socket.send(new DatagramPacket(s, s.length, address, port));
 		return e;
