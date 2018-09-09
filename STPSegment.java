@@ -33,7 +33,7 @@ public class STPSegment implements Serializable {
     this.ackNum = ackNum;
     this.flags = flags;
     this.data = data;
-    this.checksum = calculateChecksum();
+    this.checksum = calculateChecksum(this);
 	}
 
 	public byte[] toByteArray() {
@@ -55,20 +55,25 @@ public class STPSegment implements Serializable {
 	public void setSeqNum(int n) { seqNum = n; }
 	public void setAckNum(int n) { ackNum = n; }
 	public void setFlags(short n) { flags = n; }
+	public void setChecksum(short n) { checksum = n; }
 	public void setData(byte[] data) { this.data = data; }
 
-  private short calculateChecksum() {
-  	ByteBuffer buff = ByteBuffer.wrap(toByteArray());
+	/* 
+	 * Calculates the 16 bit checksum for the given segment.
+	 * This excludes the checksum value in the segment.
+	 */
+  public static short calculateChecksum(STPSegment s) {
+  	ByteBuffer buff = ByteBuffer.allocate(HEADER_BYTES + s.getData().length);
+  	buff.putInt(s.getSeqNum());
+  	buff.putInt(s.getAckNum());
+  	buff.putShort(s.getFlags());
+  	buff.put(s.getData());
+  	buff.rewind();
+
   	int checksum = 0;
   	int overflow = 1 << 16;
-
-  	// This includes checksum... remove checksum.
-  	while(buff.remaining() != 0) {
-  		if(buff.remaining() == 1) {
-  			checksum += (short)(buff.get()) << 8;
-  		} else {
-  			checksum += buff.getShort();
-  		}
+  	while(buff.remaining() > 1) {
+			checksum += buff.getShort();
 
   		if((overflow & checksum) == overflow) {
   			checksum += 1;

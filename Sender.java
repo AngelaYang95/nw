@@ -27,11 +27,15 @@ public class Sender {
 		float pDrop = Float.parseFloat(args[6]);
 		float pDuplicate = Float.parseFloat(args[7]);
 		float pCorrupt = Float.parseFloat(args[8]);
+		float pOrder = Float.parseFloat(args[9]);
+		int maxOrder = Integer.parseInt(args[10]);
+		float pDelay = Float.parseFloat(args[11]);
+		int maxDelay = Integer.parseInt(args[12]);
 
 		// Initialise sender and Datagram socket for sending UDP packets.
 		Logger logger = new Logger("Sender_log.txt");
     DatagramSocket socket = new DatagramSocket();
-		PLDModule pld = new PLDModule(socket, pDrop, pDuplicate, pCorrupt);
+		PLDModule pld = new PLDModule(socket, pDrop, pDuplicate, pCorrupt, pOrder, maxOrder, pDelay, maxDelay);
     DatagramPacket response = new DatagramPacket(new byte[STPSegment.HEADER_BYTES+mss], STPSegment.HEADER_BYTES+mss);
     STPSegment responseSegment;
     int seqNum = 0, ackNum = 0;
@@ -80,10 +84,11 @@ public class Sender {
     	// Send out packets left in window and log details.
     	long sendTime = System.currentTimeMillis();
     	for(STPSegment segment : window) {
-    		System.out.println("Sending... seq=" + segment.getSeqNum() + " ack=" + segment.getAckNum());
     		segment.setAckNum(ackNum);
 	    	Event e = pld.send(segment, ip, port);
-	    	logger.log(e, (double)(sendTime/1000));
+
+	    	if(e == Event.CORR) System.out.println(e.toString() + " sending... seq=" + segment.getSeqNum() + " ack=" + segment.getAckNum());
+	    	logger.log(e, (double)(sendTime/1000), segment.getSeqNum(), segment.getData().length, segment.getAckNum());
     	}
 
     	// Await for acknowledgement from receiver
@@ -104,8 +109,6 @@ public class Sender {
 
 		    // Process received ack.
 		    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
-
-	    	System.out.println("comparing.." + seqNum + " --- " + responseSegment.getAckNum() + "----" + responseSegment.getSeqNum());
 	    	if(seqNum < responseSegment.getAckNum()) {
 	    		seqNum = responseSegment.getAckNum();
 	    		ackNum = responseSegment.getSeqNum() + 1;

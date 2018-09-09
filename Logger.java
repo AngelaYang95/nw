@@ -15,8 +15,8 @@ public class Logger {
 		}
 	}
 
-	public void log(Event e, double time) {
-		printer.printf("%-20s %-20f\n", e.toString(), time);
+	public void log(Event e, double time, int seqNum, int numBytes, int ackNum) {
+		printer.printf("%-20s %-20f %-4d %-4d %-4d\n", e.toString(), time, seqNum, numBytes, ackNum);
 		printer.flush();
 	}
 

@@ -59,8 +59,11 @@ public class Receiver {
     while(state == State.CONNECTED) {
 			socket.receive(dataPacket);
 
+      Event event = Event.RCV;
 			responseSegment = new STPSegment(Arrays.copyOfRange(dataPacket.getData(), 0, dataPacket.getLength()));
-	    if(responseSegment.getFlags() == STPSegment.FIN_MASK) {
+      if(responseSegment.getChecksum() != STPSegment.calculateChecksum(responseSegment)) {
+        event = Event.CORR;
+      } else if(responseSegment.getFlags() == STPSegment.FIN_MASK) {
     		state = State.CLOSING;
     		ackNum += 1;
 	    } else if(responseSegment.getSeqNum() == ackNum) {
@@ -72,9 +75,9 @@ public class Receiver {
 
         }
       } else {
-        System.out.println("droppping dup " + responseSegment.getSeqNum());
+        event = Event.DUP;
       }
-      System.out.println("sending! seq=" + seqNum + " ack="+ ackNum);
+      logger.log(event, System.currentTimeMillis(), responseSegment.getSeqNum(), responseSegment.getData().length, responseSegment.getAckNum());
 	    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 		}
     System.out.println("Transfer complete!");

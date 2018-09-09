@@ -14,7 +14,7 @@ in_file="test2.pdf"
 # do
 	java Receiver 8000 $out_file &
 	echo "Terminate receiver: kill -15 $!"
-	java Sender 127.0.0.1 8000 $in_file 500 500 6 0 0.5 0 &
+	java Sender 127.0.0.1 8000 $in_file 500 500 6 0 0 0 0.2 3 0 0&
 	echo "Terminate sender: kill -15 $!"
 
 	wait
