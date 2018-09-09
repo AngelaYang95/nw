@@ -14,38 +14,66 @@ public class PLDModule {
 	private float pDuplicate;
 	private float pCorrupt;
 	private float pOrder;
+	private Stat stats;
 
 	// Statistics
-	private int dropped = 0;
-	private int corrupted = 0;
-	private int reordered = 0;
-	private int duplicated = 0;
-	private int delayed = 0;
-	private int segments = 0;
+	public class Stat {
+		public Stat() {}
+		public int dropped = 0;
+		public int corrupted = 0;
+		public int reordered = 0;
+		public int duplicated = 0;
+		public int delayed = 0;
+		public int segments = 0;
+	} 
 
-	PLDModule(DatagramSocket socket, float pDrop) {
+	PLDModule(DatagramSocket socket, float pDrop, float pDuplicate, float pCorrupt) {
 		this.socket = socket;
 		this.pDrop = pDrop;
+		this.pDuplicate = pDuplicate;
+		this.pCorrupt = pCorrupt;
 		this.random = new Random(50);
+		this.stats = new Stat();
 	}
 
 	public Event send(STPSegment segment, InetAddress address, int port) throws IOException {
 		byte[] s = segment.toByteArray();
 		Event e = Event.SND;
-		segments++;
+		stats.segments++;
 
 		if(random.nextFloat() < pDrop) {
-			dropped++;
+			stats.dropped++;
 			return Event.DROP;
 		} 
-		// if(random.nextFloat() < pDuplicate) {
-		// 	duplicated++;
-		// 	socket.send(new DatagramPacket(s, s.length, address, port));
-		// } else if(random.nextFloat() < pCorrupt) {
-		// 	// bit error
-		// }
+		
+		if(random.nextFloat() < pDuplicate) 
+		{
+			stats.duplicated++;
+			socket.send(new DatagramPacket(s, s.length, address, port));
+			e = Event.DUP;
+		} else if(random.nextFloat() < pCorrupt) 
+		{
+			corruptPacket(segment);
+			stats.corrupted++;
+			e = Event.CORR;
+		} else if(random.nextFloat() < pOrder) 
+		{
+
+		}
 
 		socket.send(new DatagramPacket(s, s.length, address, port));
 		return e;
+	}
+
+	public Stat getStats() {
+		return stats;
+	}
+
+	/** Flips a random bit in the data segment */
+	private void corruptPacket(STPSegment segment) {
+		byte[] data = segment.getData();
+		int pos = (int)(Math.random() * data.length);
+		data[pos] = (byte)(1 - data[pos]);
+		segment.setData(data);
 	}
 }

@@ -45,7 +45,7 @@ public class Receiver {
     }
 
     // Send back a synack and create the file.
-		socket.send(buildPacket(seqNum, ackNum, STPSegment.SYN_MASK | STPSegment.ACK_MASK, ip, port));
+		socket.send(buildPacket(seqNum, ackNum, (short)(STPSegment.SYN_MASK | STPSegment.ACK_MASK), ip, port));
 
 		// Await an ACK from sender.
     socket.receive(handshakePacket);
@@ -65,12 +65,16 @@ public class Receiver {
     		ackNum += 1;
 	    } else if(responseSegment.getSeqNum() == ackNum) {
   			ackNum += responseSegment.getData().length;
-  			try {
-  				out.write(responseSegment.getData());
-  			} catch(IOException e) {
+        seqNum = responseSegment.getAckNum();
+        try {
+          out.write(responseSegment.getData());
+        } catch(IOException e) {
 
-  			}
-	    }
+        }
+      } else {
+        System.out.println("droppping dup " + responseSegment.getSeqNum());
+      }
+      System.out.println("sending! seq=" + seqNum + " ack="+ ackNum);
 	    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
 		}
     System.out.println("Transfer complete!");
@@ -85,7 +89,7 @@ public class Receiver {
 		out.close();
 	}
 
-	public static DatagramPacket buildPacket(int seqNum, int ackNum, int flags, InetAddress ip, int port) {
+	public static DatagramPacket buildPacket(int seqNum, int ackNum, short flags, InetAddress ip, int port) {
 		STPSegment segment = new STPSegment(seqNum, ackNum, flags, new byte[0]);
 		byte[] s = segment.toByteArray();
 		return new DatagramPacket(s, s.length, ip, port);
