@@ -18,6 +18,7 @@ public class STPSegment implements Serializable {
 	private short flags;
 	private short checksum = 0;
 	private byte[] data;
+	private boolean rxt = false;
 
 	public STPSegment(byte[] segment) {
 		ByteBuffer buff = ByteBuffer.wrap(segment);
@@ -57,6 +58,23 @@ public class STPSegment implements Serializable {
 	public void setFlags(short n) { flags = n; }
 	public void setChecksum(short n) { checksum = n; }
 	public void setData(byte[] data) { this.data = data; }
+
+	public boolean isRxt() { return rxt; }
+	public void setRxt(boolean rxt) { this.rxt = rxt; }
+
+	@Override
+	public boolean equals(Object other) {
+		if(other == null) {
+			return false;
+		}
+
+		if(!(other instanceof STPSegment)) {
+			return false;
+		}
+
+		STPSegment segment = (STPSegment) other;
+    return this.getSeqNum() == segment.getSeqNum();
+	}
 
 	/* 
 	 * Calculates the 16 bit checksum for the given segment.

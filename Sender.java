@@ -4,6 +4,7 @@ import java.net.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
+// Refactor to multi-thread.
 public class Sender {
 	public enum State {
 		HANDSHAKE,
@@ -33,120 +34,125 @@ public class Sender {
 		int maxDelay = Integer.parseInt(args[12]);
 
 		// Initialise sender and Datagram socket for sending UDP packets.
-		Logger logger = new Logger("Sender_log.txt");
+		STPLogger logger = new STPLogger("Sender_log.txt");
     DatagramSocket socket = new DatagramSocket();
-		PLDModule pld = new PLDModule(socket, pDrop, pDuplicate, pCorrupt, pOrder, maxOrder, pDelay, maxDelay);
-    DatagramPacket response = new DatagramPacket(new byte[STPSegment.HEADER_BYTES+mss], STPSegment.HEADER_BYTES+mss);
-    STPSegment responseSegment;
+		PLDModule pld = new PLDModule(logger, socket, pDrop, pDuplicate, pCorrupt, pOrder, maxOrder, pDelay, maxDelay);
+    DatagramPacket inPacket = new DatagramPacket(new byte[STPSegment.HEADER_BYTES + mss], STPSegment.HEADER_BYTES+mss);
     int seqNum = 0, ackNum = 0;
     
     // Initiate handshake
-		State state = State.HANDSHAKE;
-    socket.send(buildPacket(seqNum, ackNum, STPSegment.SYN_MASK, ip, port));
-    System.out.println("Handshake..");
+		STPSegment outSegment = new STPSegment(seqNum, ackNum, STPSegment.SYN_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
 
     // Await SYNACK and acknowledge.
-    socket.receive(response);
-    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
-    seqNum = responseSegment.getAckNum();
-    ackNum = responseSegment.getSeqNum() + 1;
+    socket.receive(inPacket);
+    STPSegment inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    seqNum = inSegment.getAckNum();
+    ackNum = inSegment.getSeqNum() + 1;
+    logger.log(inSegment, Event.RCV);
 
-    // Goes into data transfer part.
-    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
-    state = State.CONNECTED;
-    seqNum++;
-    ackNum++;
+    // Send final handshake ACK.
+		outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
+    State state = State.CONNECTED;
 
-    System.out.println("datering..");
-    // Read data from file to buffer. DO as you go. 
-    // you can only read up to MWS at a time.
-    // Timer timer = new Timer();
+    // Begin transferring file data.
 		BufferedInputStream br = new BufferedInputStream(new FileInputStream(filename));
     List<STPSegment> window = new LinkedList<>();
 		double estimatedRTT = 500;
 		double devRTT = 250;
-    while(state == State.CONNECTED || (state == State.CLOSING && !window.isEmpty())) {
+    int sendBase = seqNum;
+    
+    while(state == State.CONNECTED || !window.isEmpty()) {
 
-    	if(window.isEmpty()) {
-    		byte[] data = new byte[Math.min(mws, mss)];
+    	// Read in mws of data into the send window.
+    	while(state != State.CLOSING && seqNum - sendBase < mws) {
+    		byte[] data = new byte[mss];
     		int bytesRead = br.read(data, 0, data.length);
     		if(bytesRead == -1) {
     			state = State.CLOSING;
     			br.close();
-    			continue;
+    			break;
     		}
     		data = Arrays.copyOfRange(data, 0, bytesRead);
     		window.add(new STPSegment(seqNum, ackNum, STPSegment.DATA_MASK, data));
-    	} else {
-    		// this is retransmission
+    		seqNum += bytesRead;
     	}
 
-    	// Send out packets left in window and log details.
-    	long sendTime = System.currentTimeMillis();
+    	// Send segments in the send window through the PLDModule.
+    	// long sendTime = System.currentTimeMillis();
+			STPTimer timer = new STPTimer();
+			timer.restart();
     	for(STPSegment segment : window) {
-    		segment.setAckNum(ackNum);
-	    	Event e = pld.send(segment, ip, port);
-
-	    	if(e == Event.CORR) System.out.println(e.toString() + " sending... seq=" + segment.getSeqNum() + " ack=" + segment.getAckNum());
-	    	logger.log(e, (double)(sendTime/1000), segment.getSeqNum(), segment.getData().length, segment.getAckNum());
+	    	pld.send(segment, ip, port);
     	}
 
-    	// Await for acknowledgement from receiver
-    	while(true) {
+    	// Wait for acknowledgements from receiver.
+    	int dupAcks = 0;
+    	while(window.size() != 0) {
 		    try {
 		    	socket.setSoTimeout((int)(estimatedRTT + gamma * devRTT));
-		   		socket.receive(response);
+		   		socket.receive(inPacket);
 		    } catch(SocketTimeoutException e) {
-		    	// Increment retransmission count.
-		    	System.out.println("Timeout retransmitting...");
+		    	Iterator<STPSegment> it = window.iterator();
+			    while(it.hasNext()) it.next().setRxt(true);
 		    	break;
 		    }
-		    // timer.cancel();
 
-		    double sampleRTT = Math.max(Math.abs(System.currentTimeMillis() - sendTime), 1);
-		    estimatedRTT = (1 - 0.125) * estimatedRTT + 0.125 * sampleRTT;
-		    devRTT = (1 - 0.25) * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
-
-		    // Process received ack.
-		    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
-	    	if(seqNum < responseSegment.getAckNum()) {
-	    		seqNum = responseSegment.getAckNum();
-	    		ackNum = responseSegment.getSeqNum() + 1;
-	    		window.remove(0);
-	    	} else {
-	    		// dupl ack received.
-	    	}
-	    	if(window.isEmpty()) {
-	    		break;
-	    	}
+		    inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+		    if(inSegment.getAckNum() <= sendBase) { 	
+					dupAcks++;
+		    	logger.log(inSegment, new Event[]{Event.RCV, Event.DA});
+		    	if(dupAcks == 3) {
+		    		window.get(0).setRxt(true);
+		    		pld.send(window.get(0), ip, port);
+		    		dupAcks = 0;
+		    	}
+		    } else {
+			    long sampleRTT = Math.max(timer.getElapsedTime(), 1);
+			    estimatedRTT = (1 - 0.125) * estimatedRTT + 0.125 * sampleRTT;
+			    devRTT = (1 - 0.25) * devRTT + 0.25 * Math.abs(sampleRTT - estimatedRTT);
+			    
+		    	Iterator<STPSegment> it = window.iterator();
+			    while(it.hasNext() && it.next().getSeqNum() < inSegment.getAckNum()) {
+	    			it.remove();
+	    			sendBase = inSegment.getAckNum();
+			    }
+			    dupAcks = 0;
+	    		logger.log(inSegment, Event.RCV);
+		    }
     	}
     }
     System.out.println("Data transfer complete! Closing connection...");
 
-    // Send FIN and await acknowledgement.
-    socket.send(buildPacket(seqNum, ackNum, STPSegment.FIN_MASK, ip, port));
-    socket.receive(response);
-    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
-    seqNum = responseSegment.getAckNum();
-		ackNum = responseSegment.getSeqNum() + 1;
+    // Initiate connection teardown.
+    outSegment = new STPSegment(seqNum, ackNum, STPSegment.FIN_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
 
-		System.out.println("Ack waiiting...");
-    // Await FIN and return ack.
-    socket.receive(response);
-    responseSegment = new STPSegment(Arrays.copyOfRange(response.getData(), 0, response.getLength()));
-    seqNum = responseSegment.getAckNum();
-		ackNum = responseSegment.getSeqNum() + 1;
+    socket.receive(inPacket);
+    inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    seqNum = inSegment.getAckNum();
+		ackNum = inSegment.getSeqNum() + 1;
+		logger.log(inSegment, Event.RCV);
 
-    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
+    // Await teardown from Receiver.
+    socket.receive(inPacket);
+    inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    seqNum = inSegment.getAckNum();
+		ackNum = inSegment.getSeqNum() + 1;
+		logger.log(inSegment, Event.RCV);
+
+		outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
 
     // Close our connection.
+    logger.logStats(0, 0, pld.getStats(), 0, 0, 0);
+    pld.close();
     socket.close();
     logger.close();
-	}
-
-	public static DatagramPacket buildPacket(int seqNum, int ackNum, short flags, InetAddress ip, int port) {
-		STPSegment segment = new STPSegment(seqNum, ackNum, flags, new byte[0]);
-		byte[] s = segment.toByteArray();
-		return new DatagramPacket(s, s.length, ip, port);
 	}
 }

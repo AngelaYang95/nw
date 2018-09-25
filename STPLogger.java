@@ -1,12 +1,16 @@
 import java.nio.*;
 import java.io.*;
 import java.util.*;
+import java.text.DecimalFormat;
 
-public class Logger {
+public class STPLogger {
+	private static DecimalFormat df = new DecimalFormat("#.##");
+
 	private File file;
 	private PrintWriter printer;
+	private long startTime;
 
-	public Logger(String filename) {
+	public STPLogger(String filename) {
 		File file = new File(filename);
 		try {
 			file.createNewFile();
@@ -15,9 +19,44 @@ public class Logger {
 		}
 	}
 
-	public void log(Event e, double time, int seqNum, int numBytes, int ackNum) {
-		printer.printf("%-20s %-20f %-4d %-4d %-4d\n", e.toString(), time, seqNum, numBytes, ackNum);
-		printer.flush();
+	public void log(STPSegment s, Event... events) {
+		printer.printf("%-20s %-20.2f %-4s %-4d %-4d %-4d\n", eventsToString(events, s.isRxt()), getTime(), 
+				flagsToString(s.getFlags()), s.getSeqNum(), s.getData().length, s.getAckNum());
+	}
+
+	public double getTime() {
+		if(startTime == 0) startTime = System.currentTimeMillis();
+		return (double)(System.currentTimeMillis() - startTime) / 1000;
+	}
+
+	/* Concats the string rep. for the list of events. */
+	public String eventsToString(Event[] events, boolean isRxt) {
+		StringJoiner sj = new StringJoiner("/");
+		for(Event e : events) {
+			sj.add(e.toString());
+		}
+		if(isRxt) {
+			sj.add(Event.RXT.toString());
+		}
+		return sj.toString();
+	}
+
+	/* Extracts the packet code from the flags. */
+	public String flagsToString(int flags) {
+		StringJoiner sj = new StringJoiner("/");
+		if((flags & STPSegment.SYN_MASK) == STPSegment.SYN_MASK) {
+			sj.add("S");
+		}
+		if((flags & STPSegment.ACK_MASK) == STPSegment.ACK_MASK) {
+			sj.add("A");
+		}
+		if((flags & STPSegment.DATA_MASK) == STPSegment.DATA_MASK) {
+			sj.add("D");
+		}
+		if((flags & STPSegment.FIN_MASK) == STPSegment.FIN_MASK) {
+			sj.add("F");
+		}
+		return sj.toString();
 	}
 
 	public void logStats(int fileSize, int numSeg, PLDModule.Stat stat, int retransmits, int fastRetransmits, int dupAcks) {
@@ -38,6 +77,7 @@ public class Logger {
 	}
 
 	public void close() {
+		printer.flush();
 		printer.close();
 	}
 }

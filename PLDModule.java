@@ -6,9 +6,11 @@ import java.util.*;
 /* PLDModule */
 public class PLDModule {
 
-	// private Timer timer = new Timer();  // must close this.
 	private DatagramSocket socket;
 	private Random random;
+	private STPLogger logger;
+	private Timer timer = new Timer();
+
 	private float pDrop;
 	private float pDuplicate;
 	private float pCorrupt;
@@ -16,8 +18,8 @@ public class PLDModule {
 	private int maxOrder;
 	private float pDelay;
 	private int maxDelay;
-	private DatagramPacket reorder = null;
-	private int reorderCount;
+	private STPSegment reorderSegment = null;
+	private int reorderWait;
 	private Stat stats;
 
 	// Statistics
@@ -29,10 +31,11 @@ public class PLDModule {
 		public int duplicated = 0;
 		public int delayed = 0;
 		public int segments = 0;
-	} 
+	}
 
-	PLDModule(DatagramSocket socket, float pDrop, float pDuplicate, float pCorrupt, float pOrder, 
-			int maxOrder, float pDelat, int maxDelay) {
+	PLDModule(STPLogger logger, DatagramSocket socket, float pDrop, float pDuplicate, float pCorrupt, float pOrder, 
+			int maxOrder, float pDelay, int maxDelay) {
+		this.logger = logger;
 		this.socket = socket;
 		this.pDrop = pDrop;
 		this.pDuplicate = pDuplicate;
@@ -45,60 +48,76 @@ public class PLDModule {
 		this.stats = new Stat();
 	}
 
-	public Event send(STPSegment segment, InetAddress address, int port) throws IOException {
-		byte[] s = segment.toByteArray();
+	/* 
+	 * Mimics network turbulence and sends packet through UDP socket. 
+   * Returns an Event. 
+	 */
+	public void send(STPSegment segment, InetAddress ip, int port) throws IOException {
+		byte[] segmentBytes = segment.toByteArray();
+		DatagramPacket packet = new DatagramPacket(segmentBytes, segmentBytes.length, ip, port);
 		stats.segments++;
 
-		if(reorder != null) {
-			reorderCount++;
-			if(reorderCount == maxOrder) {
-				System.out.println("Sending reordered " + reorderCount);
-				socket.send(reorder);
-				reorderCount = 0;
-				reorder = null;
+		// Send reordered packet.
+		if(reorderSegment != null) { 
+			if(reorderWait == 0) {
+				segmentBytes = reorderSegment.toByteArray();
+				socket.send(new DatagramPacket(segmentBytes, segmentBytes.length, ip, port));
+				logger.log(reorderSegment, new Event[]{Event.SND, Event.RORD});
+				reorderSegment = null;
 			}
+			reorderWait--;
 		}
 
 		if(random.nextFloat() < pDrop) {
 			stats.dropped++;
-			return Event.DROP;
+			logger.log(segment, Event.DROP);
+			return;
 		} 
-
 		if(random.nextFloat() < pDuplicate) {
 			stats.duplicated++;
-			socket.send(new DatagramPacket(s, s.length, address, port));
-			socket.send(new DatagramPacket(s, s.length, address, port));
-			return Event.DUP;
+			socket.send(packet);
+			logger.log(segment, Event.SND);
+			socket.send(packet);
+			logger.log(segment, Event.DUP);
+			return;
 		} 
-
 		if(random.nextFloat() < pCorrupt) {
 			stats.corrupted++;
-			DatagramPacket p = new DatagramPacket(s, s.length, address, port);
-			corruptPacket(p);
-			socket.send(p);
-			return Event.CORR;
+			corruptPacket(packet);
+			socket.send(packet);
+			logger.log(segment, Event.CORR);
+			return;
 		}
-
-		if(random.nextFloat() < pOrder && reorder == null) {
-			System.out.println("---- Reordering " + segment.getSeqNum());
+		if(random.nextFloat() < pOrder && reorderSegment == null) {
 			stats.reordered++;
-			reorder = new DatagramPacket(s, s.length, address, port);
-			reorderCount = 0;
-			return Event.RORD;
+			reorderSegment = segment;
+			reorderWait = maxOrder;
+			return;
 		}
-
 		if(random.nextFloat() < pDelay) {
-			return Event.DELY;
+			stats.delayed++;
+			timer.schedule(new TimerTask() {
+				public void run() {
+					try {
+						socket.send(packet);
+						logger.log(segment, new Event[]{Event.SND, Event.DELY});
+					} catch(IOException e) {
+						System.out.println(e.getMessage());
+					}
+				}
+			}, maxDelay);
+		} else {
+			socket.send(packet);
+			logger.log(segment, Event.SND);
 		}
-
-		// Regular send event.
-		System.out.println("Sending reordered " + segment.getSeqNum());
-		socket.send(new DatagramPacket(s, s.length, address, port));
-		return Event.SND;
 	}
 
 	public Stat getStats() {
 		return stats;
+	}
+
+	public void close() {
+		timer.cancel();
 	}
 
 	/** Flips a random bit in the data segment */

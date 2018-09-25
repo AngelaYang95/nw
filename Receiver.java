@@ -18,83 +18,121 @@ public class Receiver {
 			return;
 		}
 
+    // Initialise 
 		int myPort = Integer.parseInt(args[0]);
 		String filename = args[1];
-
-		// Datagram socket for receiving and sending UDP packets.
-    // Wait for SYN from sender. We assume that packets won't be dropped here.
-    Logger logger = new Logger("Receiver_log.txt");
+    STPLogger logger = new STPLogger("Receiver_log.txt");
     DatagramSocket socket = new DatagramSocket(myPort);
     State state = State.HANDSHAKE;
-    DatagramPacket handshakePacket = new DatagramPacket(new byte[1024], 1024);
 
-    // Parse and sync sender information.
-    socket.receive(handshakePacket);
-    STPSegment responseSegment = new STPSegment(Arrays.copyOfRange(handshakePacket.getData(), 0, handshakePacket.getLength()));
-    InetAddress ip = handshakePacket.getAddress();
-    int port = handshakePacket.getPort();
-    int seqNum = 10;
-    int ackNum = responseSegment.getSeqNum() + 1;
+    // Wait for SYN from Sender and sync sender information.
+    DatagramPacket inPacket = new DatagramPacket(new byte[1500], 1500);
+    socket.receive(inPacket);
+
+    STPSegment inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    InetAddress ip = inPacket.getAddress();
+    int port = inPacket.getPort();
+    int seqNum = 0;
+    int ackNum = inSegment.getSeqNum() + 1;
     int mss = 500;
+    int mws = 500;
+    logger.log(inSegment, Event.RCV);
 
+    // Send back a SYNACK segment.
+    STPSegment outSegment = new STPSegment(seqNum, ackNum, (short)(STPSegment.SYN_MASK | STPSegment.ACK_MASK), new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
+
+    // Await an ACK from sender.
+    socket.receive(inPacket);
+    inSegment = new STPSegment(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    seqNum = inSegment.getAckNum();
+    logger.log(inSegment, Event.RCV);
+
+    state = State.CONNECTED;
+
+    // Three way handshake complete, so create file for incoming data.
     File file = new File(filename);
     FileOutputStream out = new FileOutputStream(file);
     try {
-    	file.createNewFile();
+      file.createNewFile();
     } catch(IOException e) {
     }
-
-    // Send back a synack and create the file.
-		socket.send(buildPacket(seqNum, ackNum, (short)(STPSegment.SYN_MASK | STPSegment.ACK_MASK), ip, port));
-
-		// Await an ACK from sender.
-    socket.receive(handshakePacket);
-    responseSegment = new STPSegment(Arrays.copyOfRange(handshakePacket.getData(), 0, handshakePacket.getLength()));
-    seqNum = responseSegment.getAckNum();
-    ackNum = responseSegment.getSeqNum() + 1;
-    state = State.CONNECTED;
-
-    // Begin DATA TRANSFER await data packets.
-    DatagramPacket dataPacket = new DatagramPacket(new byte[STPSegment.HEADER_BYTES + mss], STPSegment.HEADER_BYTES + mss);
-    while(state == State.CONNECTED) {
-			socket.receive(dataPacket);
-
-      Event event = Event.RCV;
-			responseSegment = new STPSegment(Arrays.copyOfRange(dataPacket.getData(), 0, dataPacket.getLength()));
-      if(responseSegment.getChecksum() != STPSegment.calculateChecksum(responseSegment)) {
-        event = Event.CORR;
-      } else if(responseSegment.getFlags() == STPSegment.FIN_MASK) {
-    		state = State.CLOSING;
-    		ackNum += 1;
-	    } else if(responseSegment.getSeqNum() == ackNum) {
-  			ackNum += responseSegment.getData().length;
-        seqNum = responseSegment.getAckNum();
-        try {
-          out.write(responseSegment.getData());
-        } catch(IOException e) {
-
-        }
-      } else {
-        event = Event.DUP;
+    
+    // Begin data transfer, wait for data packets.
+    PriorityQueue<STPSegment> buffer = new PriorityQueue<>((int)(mws/mss) + 1, new Comparator<STPSegment>() {
+      /* Order from smallest to largest seqNum. */
+      @Override
+      public int compare(STPSegment o1, STPSegment o2) {
+        return o1.getSeqNum() - o2.getSeqNum();
       }
-      logger.log(event, System.currentTimeMillis(), responseSegment.getSeqNum(), responseSegment.getData().length, responseSegment.getAckNum());
-	    socket.send(buildPacket(seqNum, ackNum, STPSegment.ACK_MASK, ip, port));
-		}
+    });
+    while(state == State.CONNECTED) {
+      DatagramPacket dataPacket = new DatagramPacket(new byte[STPSegment.HEADER_BYTES + mss], STPSegment.HEADER_BYTES + mss);
+			socket.receive(dataPacket);
+      inSegment = new STPSegment(Arrays.copyOfRange(dataPacket.getData(), 0, dataPacket.getLength()));
+
+      // Dispose corrupt packet.
+      if(inSegment.getChecksum() != STPSegment.calculateChecksum(inSegment)) {
+        logger.log(inSegment, new Event[]{Event.RCV, Event.CORR});
+        continue;
+      }
+
+      // Close connection if FIN packet received from sender.
+      if(inSegment.getFlags() == STPSegment.FIN_MASK) {
+        logger.log(inSegment, Event.RCV);
+        ackNum += 1;
+        break;
+      }
+
+      if(inSegment.getSeqNum() < ackNum || buffer.contains(inSegment)) {
+        logger.log(inSegment, new Event[]{Event.RCV, Event.DUP});
+      } else {
+        buffer.add(inSegment);
+        logger.log(inSegment, Event.RCV);
+      }
+
+      // Flush buffer for all consecutive inorder packets.
+      boolean isDupAck = (inSegment.getSeqNum() != ackNum);
+      while(!buffer.isEmpty()) {
+        STPSegment s = buffer.peek();
+        if(s.getSeqNum() != ackNum) {
+          break;
+        }
+        try {
+          out.write(s.getData());
+        } catch(IOException e) {
+          System.out.println(e.getMessage());
+        }
+        ackNum += s.getData().length;
+        buffer.remove();
+      }
+
+      // Send back a cumulative acknowledgment.
+      outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
+      socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+      if(isDupAck) {
+        logger.log(outSegment, new Event[]{Event.SND, Event.DA});
+      } else {
+        logger.log(outSegment, Event.SND);
+      }
+    }
+
+    // Acknowledge sender's FIN packet.
+    outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
+    out.close();
     System.out.println("Transfer complete!");
 
-		// Begin server CLOSING / teardown by sending fin.
-		// Again we assume that teardown packets do not go through PLD.
-		socket.send(buildPacket(seqNum, ackNum, STPSegment.FIN_MASK, ip, port));
+    // Begin Receiver teardown by sending FIN packet to Sender.
+    outSegment = new STPSegment(seqNum, ackNum, STPSegment.FIN_MASK, new byte[0]);
+    socket.send(new DatagramPacket(outSegment.toByteArray(), STPSegment.HEADER_BYTES, ip, port));
+    logger.log(outSegment, Event.SND);
 
-		// Wait for ACK from sender and ACK back.
+    // Wait for finaly ACK from sender.
     socket.receive(new DatagramPacket(new byte[STPSegment.HEADER_BYTES], STPSegment.HEADER_BYTES));
-		socket.close();
-		out.close();
-	}
-
-	public static DatagramPacket buildPacket(int seqNum, int ackNum, short flags, InetAddress ip, int port) {
-		STPSegment segment = new STPSegment(seqNum, ackNum, flags, new byte[0]);
-		byte[] s = segment.toByteArray();
-		return new DatagramPacket(s, s.length, ip, port);
+    socket.close();
+    logger.close();
 	}
 }
