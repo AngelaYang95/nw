@@ -34,7 +34,7 @@ public class PLDModule {
 	}
 
 	PLDModule(STPLogger logger, DatagramSocket socket, float pDrop, float pDuplicate, float pCorrupt, float pOrder, 
-			int maxOrder, float pDelay, int maxDelay) {
+			int maxOrder, float pDelay, int maxDelay, int seed) {
 		this.logger = logger;
 		this.socket = socket;
 		this.pDrop = pDrop;
@@ -44,57 +44,51 @@ public class PLDModule {
 		this.maxOrder = maxOrder;
 		this.pDelay = pDelay;
 		this.maxDelay = maxDelay;
-		this.random = new Random(50);
+		this.random = new Random(seed);
 		this.stats = new Stat();
 	}
 
 	/* 
-	 * Mimics network turbulence and sends packet through UDP socket. 
-   * Returns an Event. 
+	 * Mimics network turbulence and sends packet through UDP socket.
 	 */
 	public void send(STPSegment segment, InetAddress ip, int port) throws IOException {
-		byte[] segmentBytes = segment.toByteArray();
+		byte[] segmentBytes = STPSegment.serialize(segment);
 		DatagramPacket packet = new DatagramPacket(segmentBytes, segmentBytes.length, ip, port);
 		stats.segments++;
 
 		// Send reordered packet.
 		if(reorderSegment != null) { 
 			if(reorderWait == 0) {
-				segmentBytes = reorderSegment.toByteArray();
-				socket.send(new DatagramPacket(segmentBytes, segmentBytes.length, ip, port));
+				byte[] reorderBytes = STPSegment.serialize(reorderSegment);
+				socket.send(new DatagramPacket(reorderBytes, reorderBytes.length, ip, port));
 				logger.log(reorderSegment, new Event[]{Event.SND, Event.RORD});
 				reorderSegment = null;
 			}
 			reorderWait--;
 		}
-
 		if(random.nextFloat() < pDrop) {
 			stats.dropped++;
 			logger.log(segment, Event.DROP);
-			return;
-		} 
-		if(random.nextFloat() < pDuplicate) {
+
+		} else if(random.nextFloat() < pDuplicate) {
 			stats.duplicated++;
 			socket.send(packet);
 			logger.log(segment, Event.SND);
 			socket.send(packet);
 			logger.log(segment, Event.DUP);
-			return;
-		} 
-		if(random.nextFloat() < pCorrupt) {
+
+		} else if(random.nextFloat() < pCorrupt) {
 			stats.corrupted++;
 			corruptPacket(packet);
 			socket.send(packet);
 			logger.log(segment, Event.CORR);
-			return;
-		}
-		if(random.nextFloat() < pOrder && reorderSegment == null) {
+
+		} else if(random.nextFloat() < pOrder && reorderSegment == null) {
 			stats.reordered++;
 			reorderSegment = segment;
 			reorderWait = maxOrder;
-			return;
-		}
-		if(random.nextFloat() < pDelay) {
+
+		} else if(random.nextFloat() < pDelay) {
 			stats.delayed++;
 			timer.schedule(new TimerTask() {
 				public void run() {
@@ -106,6 +100,7 @@ public class PLDModule {
 					}
 				}
 			}, maxDelay);
+
 		} else {
 			socket.send(packet);
 			logger.log(segment, Event.SND);

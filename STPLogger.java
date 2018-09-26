@@ -4,11 +4,10 @@ import java.util.*;
 import java.text.DecimalFormat;
 
 public class STPLogger {
-	private static DecimalFormat df = new DecimalFormat("#.##");
 
 	private File file;
 	private PrintWriter printer;
-	private long startTime;
+	private long startTime = 0;
 
 	public STPLogger(String filename) {
 		File file = new File(filename);
@@ -22,6 +21,7 @@ public class STPLogger {
 	public void log(STPSegment s, Event... events) {
 		printer.printf("%-20s %-20.2f %-4s %-4d %-4d %-4d\n", eventsToString(events, s.isRxt()), getTime(), 
 				flagsToString(s.getFlags()), s.getSeqNum(), s.getData().length, s.getAckNum());
+		printer.flush();
 	}
 
 	public double getTime() {
@@ -59,7 +59,7 @@ public class STPLogger {
 		return sj.toString();
 	}
 
-	public void logStats(int fileSize, int numSeg, PLDModule.Stat stat, int retransmits, int fastRetransmits, int dupAcks) {
+	public void logSenderStats(int fileSize, int numSeg, PLDModule.Stat stat, int retransmits, int fastRetransmits, int dupAcks) {
 		String format = "%-20s %-10d\n";
 		printer.printf("=============================================================\n");
 		printer.printf(format, "Size of the file(in Bytes)", fileSize);
@@ -74,10 +74,10 @@ public class STPLogger {
 		printer.printf(format, "Number of FAST RETRANSMISSION", fastRetransmits);
 		printer.printf(format, "Number of DUP ACKS received", dupAcks);
 		printer.printf("=============================================================\n");
+		printer.flush();
 	}
 
 	public void close() {
-		printer.flush();
 		printer.close();
 	}
 }
