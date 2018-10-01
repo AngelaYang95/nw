@@ -159,20 +159,21 @@ public class Sender {
 	    socket.receive(inPacket);
 	    inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
 			logger.log(inSegment, Event.RCV);
-			if(nextSeqNum< inSegment.getAckNum()) {
+			if(nextSeqNum < inSegment.getAckNum()) {
 	    	nextSeqNum= inSegment.getAckNum();
 				ackNum = inSegment.getSeqNum() + 1;
 				break;
 			}
     }
 
-    // Await teardown from Receiver.
+    // Await FIN packet from Receiver.
     socket.receive(inPacket);
     inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
     nextSeqNum= inSegment.getAckNum();
 		ackNum = inSegment.getSeqNum() + 1;
 		logger.log(inSegment, Event.RCV);
 
+		// Acknowledge Receiver FIN packet.
 		outSegment = new STPSegment(nextSeqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
 		outData = STPSegment.serialize(outSegment);
     socket.send(new DatagramPacket(outData, outData.length, ip, port));

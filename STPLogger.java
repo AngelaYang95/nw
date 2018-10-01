@@ -60,7 +60,7 @@ public class STPLogger {
 	}
 
 	public void logSenderStats(int fileSize, int numSeg, PLDModule.Stat stat, int retransmits, int fastRetransmits, int dupAcks) {
-		String format = "%-20s %-10d\n";
+		String format = "%-30s %-10d\n";
 		printer.printf("=============================================================\n");
 		printer.printf(format, "Size of the file(in Bytes)", fileSize);
 		printer.printf(format, "Segments transmitted (including drop & RXT)", numSeg);
@@ -78,7 +78,7 @@ public class STPLogger {
 	}
 
 	public void logReceiverStats(int bytes, int segs, int dataSeg, int bitErrors, int dupDataSegs, int dupAcks) {
-		String format = "%-20s %-10d\n";
+		String format = "%-30s %-10d\n";
 		printer.printf("=============================================================\n");
 		printer.printf(format, "Amount of data received (bytes)", bytes);
 		printer.printf(format, "Total Segments Received", segs);

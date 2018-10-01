@@ -9,10 +9,6 @@ import java.util.*;
  */
 public class Receiver {
   public final static int MAX_PACKET = 5000;
-  public enum State {
-    CONNECTED,
-    CLOSING,
-  }
   
   public static void main(String[] args) throws Exception {
     if (args.length != 2) {
@@ -30,14 +26,12 @@ public class Receiver {
     // Await an SYN from sender.
     DatagramPacket inPacket = new DatagramPacket(new byte[MAX_PACKET], MAX_PACKET);
     socket.receive(inPacket);
-
     InetAddress ip = inPacket.getAddress();
     int port = inPacket.getPort();
     STPSegment inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
     int seqNum = 0;
     int ackNum = inSegment.getSeqNum() + 1;
     logger.log(inSegment, Event.RCV);
-    sBytes += inSegment.getData().length;
     sSegs++;
 
     // Send back a SYNACK segment.
@@ -51,7 +45,6 @@ public class Receiver {
     inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
     seqNum = inSegment.getAckNum();
     logger.log(inSegment, Event.RCV);
-    sBytes += inSegment.getData().length;
     sSegs++;
 
     // Three way handshake complete, so create file for incoming data.
@@ -63,7 +56,6 @@ public class Receiver {
     }
     
     // Begin data transfer, wait for data packets.
-    State state = State.CONNECTED;
     PriorityQueue<STPSegment> buffer = new PriorityQueue<>(10, new Comparator<STPSegment>() {
       /* Order from smallest to largest seqNum. */
       @Override
@@ -75,45 +67,35 @@ public class Receiver {
     while(true) {
       socket.receive(inPacket);
       inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
-      sSegs++;
 
-      // Discard corrupt segment.
+      // Discard corrupt packet.
       if(inSegment.getChecksum() != STPSegment.calculateChecksum(inSegment)) {
         logger.log(inSegment, new Event[]{Event.RCV, Event.CORR});
         sBitErrors++;
         continue;
-
-      // Receiver teardown acknowledged by Sender. FINISH program.
-      } else if(state == State.CLOSING && inSegment.getFlags() == STPSegment.ACK_MASK) {
-        logger.log(inSegment, Event.RCV);
-        break;
+      }
+      sSegs++;
 
       // Sender has sent a FIN packet.
-      } else if(inSegment.getFlags() == STPSegment.FIN_MASK) {
+      if(inSegment.getFlags() == STPSegment.FIN_MASK) {
         logger.log(inSegment, Event.RCV);
         sBytes += inSegment.getData().length;
         ackNum += 1;
 
-        // Acknowledge sender teardown.
         outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
         outData = STPSegment.serialize(outSegment);
         socket.send(new DatagramPacket(outData, outData.length, ip, port));
         logger.log(outSegment, Event.SND);
         out.close();
-        
-        // Begin Receiver teardown by sending FIN packet to Sender.
-        state = State.CLOSING;
-        outSegment = new STPSegment(seqNum, ackNum, STPSegment.FIN_MASK, new byte[0]);
-        outData = STPSegment.serialize(outSegment);
-        socket.send(new DatagramPacket(outData, outData.length, ip, port));
-        logger.log(outSegment, Event.SND);
+        break;
+      }
+      sDataSegs++;
+      sBytes += inSegment.getData().length;
 
       // Duplicate packet received from Sender, discard and ack.
-      } else if(inSegment.getSeqNum() < ackNum || buffer.contains(inSegment)) {
+      if(inSegment.getSeqNum() < ackNum || buffer.contains(inSegment)) {
         logger.log(inSegment, Event.RCV);
-        sBytes += inSegment.getData().length;
         sDupSegs++;
-        sDataSegs++;
 
         outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
         outData = STPSegment.serialize(outSegment);
@@ -125,8 +107,6 @@ public class Receiver {
       } else if(inSegment.getSeqNum() == ackNum) {
         buffer.add(inSegment);
         logger.log(inSegment, Event.RCV);
-        sBytes += inSegment.getData().length;
-        sDataSegs++;
 
         while(!buffer.isEmpty()) {
           STPSegment s = buffer.peek();
@@ -148,7 +128,6 @@ public class Receiver {
 
       // Buffer out of order data packet.
       } else {
-        sBytes += inSegment.getData().length;
         buffer.add(inSegment);
         logger.log(inSegment, Event.RCV);
 
@@ -159,6 +138,18 @@ public class Receiver {
         sDupAcks++;
       }
     }
+
+    // Begin Receiver teardown by sending FIN packet to Sender.
+    outSegment = new STPSegment(seqNum, ackNum, STPSegment.FIN_MASK, new byte[0]);
+    outData = STPSegment.serialize(outSegment);
+    socket.send(new DatagramPacket(outData, outData.length, ip, port));
+    logger.log(outSegment, Event.SND);
+
+    // Await fin acknowledgement.
+    socket.receive(inPacket);
+    inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+    logger.log(inSegment, Event.RCV);
+    sSegs++;
 
     logger.logReceiverStats(sBytes, sSegs, sDataSegs, sBitErrors, sDupSegs, sDupAcks);
     socket.close();
