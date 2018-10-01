@@ -75,7 +75,7 @@ public class PLDModule {
 			socket.send(packet);
 			logger.log(segment, Event.SND);
 			socket.send(packet);
-			logger.log(segment, Event.DUP);
+			logger.log(segment, new Event[] {Event.SND, Event.DUP});
 
 		} else if(random.nextFloat() < pCorrupt) {
 			stats.corrupted++;
@@ -99,7 +99,7 @@ public class PLDModule {
 						System.out.println(e.getMessage());
 					}
 				}
-			}, maxDelay);
+			}, (int)(maxDelay * Math.random()));
 
 		} else {
 			socket.send(packet);

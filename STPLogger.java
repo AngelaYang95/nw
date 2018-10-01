@@ -77,6 +77,19 @@ public class STPLogger {
 		printer.flush();
 	}
 
+	public void logReceiverStats(int bytes, int segs, int dataSeg, int bitErrors, int dupDataSegs, int dupAcks) {
+		String format = "%-20s %-10d\n";
+		printer.printf("=============================================================\n");
+		printer.printf(format, "Amount of data received (bytes)", bytes);
+		printer.printf(format, "Total Segments Received", segs);
+		printer.printf(format, "Data segments received", dataSeg);
+		printer.printf(format, "Data segments with Bit Errors", bitErrors);
+		printer.printf(format, "Duplicate data segments received", dupDataSegs);
+		printer.printf(format, "Duplicate ACKs sent ", dupAcks);
+		printer.printf("=============================================================\n");
+		printer.flush();
+	}
+	
 	public void close() {
 		printer.close();
 	}

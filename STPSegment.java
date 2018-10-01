@@ -25,8 +25,8 @@ public class STPSegment implements Serializable {
     this.seqNum = seqNum;
     this.ackNum = ackNum;
     this.flags = flags;
-    this.checksum = calculateChecksum(this);
     this.data = data;
+    this.checksum = calculateChecksum(this);
 	}
 
 	public int getSeqNum() { return seqNum; }
@@ -100,24 +100,23 @@ public class STPSegment implements Serializable {
 	 * This excludes the checksum value in the segment.
 	 */
   public static short calculateChecksum(STPSegment s) {
-  	return 0;
-  	// ByteBuffer buff = ByteBuffer.allocate(HEADER_BYTES + s.getData().length);
-  	// buff.putInt(s.getSeqNum());
-  	// buff.putInt(s.getAckNum());
-  	// buff.putShort(s.getFlags());
-  	// buff.put(s.getData());
-  	// buff.rewind();
+  	ByteBuffer buff = ByteBuffer.allocate(HEADER_BYTES + s.getData().length);
+  	buff.putInt(s.getSeqNum());
+  	buff.putInt(s.getAckNum());
+  	buff.putShort(s.getFlags());
+  	buff.put(s.getData());
+  	buff.rewind();
 
-  	// int checksum = 0;
-  	// int overflow = 1 << 16;
-  	// while(buff.remaining() > 1) {
-			// checksum += buff.getShort();
+  	int checksum = 0;
+  	int overflow = 1 << 16;
+  	while(buff.remaining() > 1) {
+			checksum += buff.getShort();
 
-  	// 	if((overflow & checksum) == overflow) {
-  	// 		checksum += 1;
-  	// 		checksum ^= overflow;
-  	// 	}
-  	// }
-  	// return (short)~checksum;
+  		if((overflow & checksum) == overflow) {
+  			checksum += 1;
+  			checksum ^= overflow;
+  		}
+  	}
+  	return (short)~checksum;
   }
 }

@@ -22,6 +22,8 @@ public class Receiver {
     int myPort = Integer.parseInt(args[0]);
     String filename = args[1];
 
+    // Initialise receiver stat values.
+    int sBytes = 0, sSegs = 0, sDataSegs = 0, sBitErrors = 0, sDupSegs = 0, sDupAcks = 0;
     STPLogger logger = new STPLogger("Receiver_log.txt");
     DatagramSocket socket = new DatagramSocket(myPort);
 
@@ -35,7 +37,8 @@ public class Receiver {
     int seqNum = 0;
     int ackNum = inSegment.getSeqNum() + 1;
     logger.log(inSegment, Event.RCV);
-    
+    sBytes += inSegment.getData().length;
+    sSegs++;
 
     // Send back a SYNACK segment.
     STPSegment outSegment = new STPSegment(seqNum, ackNum, (short)(STPSegment.SYN_MASK | STPSegment.ACK_MASK), new byte[0]);
@@ -48,6 +51,8 @@ public class Receiver {
     inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
     seqNum = inSegment.getAckNum();
     logger.log(inSegment, Event.RCV);
+    sBytes += inSegment.getData().length;
+    sSegs++;
 
     // Three way handshake complete, so create file for incoming data.
     File file = new File(filename);
@@ -70,19 +75,23 @@ public class Receiver {
     while(true) {
       socket.receive(inPacket);
       inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
+      sSegs++;
 
-      // if(inSegment.getChecksum() != STPSegment.calculateChecksum(inSegment)) {
-      //   logger.log(inSegment, new Event[]{Event.RCV, Event.CORR});
+      // Discard corrupt segment.
+      if(inSegment.getChecksum() != STPSegment.calculateChecksum(inSegment)) {
+        logger.log(inSegment, new Event[]{Event.RCV, Event.CORR});
+        sBitErrors++;
+        continue;
 
-      // } else 
-      // Receiver teardown acknowledged by Sender. FINISH.
-      if(state == State.CLOSING && inSegment.getFlags() == STPSegment.ACK_MASK) {
+      // Receiver teardown acknowledged by Sender. FINISH program.
+      } else if(state == State.CLOSING && inSegment.getFlags() == STPSegment.ACK_MASK) {
         logger.log(inSegment, Event.RCV);
         break;
 
-      // Fin teardown received from Sender.
+      // Sender has sent a FIN packet.
       } else if(inSegment.getFlags() == STPSegment.FIN_MASK) {
         logger.log(inSegment, Event.RCV);
+        sBytes += inSegment.getData().length;
         ackNum += 1;
 
         // Acknowledge sender teardown.
@@ -101,16 +110,23 @@ public class Receiver {
 
       // Duplicate packet received from Sender, discard and ack.
       } else if(inSegment.getSeqNum() < ackNum || buffer.contains(inSegment)) {
-        logger.log(inSegment, new Event[]{Event.RCV, Event.DUP});
+        logger.log(inSegment, Event.RCV);
+        sBytes += inSegment.getData().length;
+        sDupSegs++;
+        sDataSegs++;
+
         outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
         outData = STPSegment.serialize(outSegment);
         socket.send(new DatagramPacket(outData, outData.length, ip, port));
         logger.log(outSegment, new Event[]{Event.SND, Event.DA});
+        sDupAcks++;
 
-      // Data packet received buffer and write inorder packets to file.
-      } else {
+      // Data packet received write inorder packets to file.
+      } else if(inSegment.getSeqNum() == ackNum) {
         buffer.add(inSegment);
         logger.log(inSegment, Event.RCV);
+        sBytes += inSegment.getData().length;
+        sDataSegs++;
 
         while(!buffer.isEmpty()) {
           STPSegment s = buffer.peek();
@@ -122,15 +138,29 @@ public class Receiver {
             ackNum += s.getData().length;
             buffer.remove();
           } catch(IOException e) {
-            System.out.println("ERRROR");
+
           }
         }
         outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
         outData = STPSegment.serialize(outSegment);
         socket.send(new DatagramPacket(outData, outData.length, ip, port));
         logger.log(outSegment, Event.SND);
-      } 
+
+      // Buffer out of order data packet.
+      } else {
+        sBytes += inSegment.getData().length;
+        buffer.add(inSegment);
+        logger.log(inSegment, Event.RCV);
+
+        outSegment = new STPSegment(seqNum, ackNum, STPSegment.ACK_MASK, new byte[0]);
+        outData = STPSegment.serialize(outSegment);
+        socket.send(new DatagramPacket(outData, outData.length, ip, port));
+        logger.log(outSegment, new Event[] {Event.SND, Event.DA});
+        sDupAcks++;
+      }
     }
+
+    logger.logReceiverStats(sBytes, sSegs, sDataSegs, sBitErrors, sDupSegs, sDupAcks);
     socket.close();
     logger.close();
 	}

@@ -38,7 +38,7 @@ public class Sender {
 		int maxDelay = Integer.parseInt(args[12]);
 		int seed = Integer.parseInt(args[13]);
 
-		// Stat parameters.
+		// Initialise sender stat values.
 		int sBytes = 0, sSegments = 0, sTimeoutRXTs = 0, sFastRXTs = 0, sDupAcks = 0;
 
 		// Initialise sender and Datagram socket for sending UDP packets.
@@ -70,15 +70,14 @@ public class Sender {
     sSegments++;
 
     // Begin transferring file data.
-		inPacket = new DatagramPacket(new byte[1500], 1500);
     State state = State.CONNECTED;
 		BufferedInputStream br = new BufferedInputStream(new FileInputStream(filename));
     List<STPSegment> window = new LinkedList<>();
 		double estimatedRTT = ESTIMATED_RTT;
 		double devRTT = DEV_RTT;
     int sendBase = nextSeqNum, dupAcks = 0;
-    STPSegment sampler = null;
     STPTimer timer = new STPTimer();
+    STPSegment sampler = null;
 
     while(state == State.CONNECTED || (state == State.CLOSING && !window.isEmpty())) {
 
@@ -103,7 +102,7 @@ public class Sender {
   		}
 
     	try {
-				socket.setSoTimeout(500);
+				socket.setSoTimeout((int)(estimatedRTT + 4 * devRTT));
 	   		socket.receive(inPacket);
 	   		inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
 
@@ -113,6 +112,7 @@ public class Sender {
 			    devRTT = (1 - 0.25) * devRTT + 0.25 * Math.abs(estimatedRTT - sampleRTT);
 			    sampler = null;
 	   		}
+
 	   		if(inSegment.getAckNum() > sendBase) {
 		    	Iterator<STPSegment> it = window.iterator();
 			    while(it.hasNext() && it.next().getSeqNum() < inSegment.getAckNum()) {
@@ -126,6 +126,7 @@ public class Sender {
 	   			dupAcks++;
 	   			sDupAcks++;
 	   			logger.log(inSegment, new Event[]{Event.RCV, Event.DA});
+
 		   		if(dupAcks == 3) {
 	 			 		STPSegment fastRXT = window.get(0);
 		    		fastRXT.setRxt(true);
@@ -137,12 +138,10 @@ public class Sender {
 		   		}
 	   		}
     	} catch(SocketTimeoutException e) {
-    		for(STPSegment s : window){
-    			s.setRxt(true);
-    			pld.send(s, ip, port);
-    			sTimeoutRXTs++;
-    			sSegments++;
-    		}
+  			window.get(0).setRxt(true);
+  			pld.send(window.get(0), ip, port);
+  			sTimeoutRXTs++;
+  			sSegments++;
   			sampler = null;
     	}
     }
