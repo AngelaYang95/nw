@@ -9,7 +9,7 @@ import java.util.*;
  */
 public class Receiver {
   public final static int MAX_PACKET = 5000;
-  
+
   public static void main(String[] args) throws Exception {
     if (args.length != 2) {
       System.out.println("Required arguments: port, filename");
@@ -76,7 +76,7 @@ public class Receiver {
       }
       sSegs++;
 
-      // Sender has sent a FIN packet.
+      // FIN packet received.
       if(inSegment.getFlags() == STPSegment.FIN_MASK) {
         logger.log(inSegment, Event.RCV);
         sBytes += inSegment.getData().length;
