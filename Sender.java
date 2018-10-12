@@ -18,11 +18,10 @@ public class Sender {
 
 	public static void main(String[] args) throws Exception {
 		if (args.length < 14) {
-			System.out.println("Missing arguments...");
+			System.err.println("Expected 14 arguments. " + args.length + " given");
 			return;
 		}
 
-		// Parse parameters.
 		InetAddress ip = InetAddress.getByName(args[0]);
 		int port = Integer.parseInt(args[1]);
 		String filename = args[2];
@@ -102,7 +101,7 @@ public class Sender {
   		}
 
     	try {
-				socket.setSoTimeout((int)(estimatedRTT + 4 * devRTT));
+				socket.setSoTimeout((int)(estimatedRTT + gamma * devRTT));
 	   		socket.receive(inPacket);
 	   		inSegment = STPSegment.deserialize(Arrays.copyOfRange(inPacket.getData(), 0, inPacket.getLength()));
 
@@ -145,7 +144,6 @@ public class Sender {
   			sampler = null;
     	}
     }
-    System.out.println("Data transfer complete! Closing connection...");
 
     // Initiate connection teardown.
     outSegment = new STPSegment(nextSeqNum, ackNum, STPSegment.FIN_MASK, new byte[0]);

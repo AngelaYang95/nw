@@ -103,7 +103,7 @@ public class Receiver {
         logger.log(outSegment, new Event[]{Event.SND, Event.DA});
         sDupAcks++;
 
-      // Data packet received write inorder packets to file.
+      // Inorder Data packet received. Write sequential buffer packets to file.
       } else if(inSegment.getSeqNum() == ackNum) {
         buffer.add(inSegment);
         logger.log(inSegment, Event.RCV);
@@ -126,7 +126,7 @@ public class Receiver {
         socket.send(new DatagramPacket(outData, outData.length, ip, port));
         logger.log(outSegment, Event.SND);
 
-      // Buffer out of order data packet.
+      // Out of order data packet is buffered.
       } else {
         buffer.add(inSegment);
         logger.log(inSegment, Event.RCV);
